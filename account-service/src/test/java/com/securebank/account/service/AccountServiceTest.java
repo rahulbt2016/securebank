@@ -2,12 +2,15 @@ package com.securebank.account.service;
 
 import com.securebank.account.dto.AccountResponse;
 import com.securebank.account.dto.CreateAccountRequest;
+import com.securebank.account.dto.CustomerBalanceSummaryResponse;
 import com.securebank.account.dto.UpdateAccountRequest;
 import com.securebank.account.entity.Account;
 import com.securebank.account.entity.AccountStatus;
 import com.securebank.account.entity.AccountType;
 import com.securebank.account.mapper.AccountMapper;
 import com.securebank.account.repository.AccountRepository;
+import com.securebank.account.repository.projection.CustomerBalanceSummary;
+import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.exception.BusinessRuleException;
 import com.securebank.common.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +21,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,7 +33,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -159,6 +168,68 @@ class AccountServiceTest {
             assertThatThrownBy(() -> accountService.updateAccount(accountId, request))
                     .isInstanceOf(BusinessRuleException.class)
                     .hasMessageContaining("closed account");
+        }
+    }
+
+    @Nested
+    @DisplayName("searchAccounts")
+    class SearchAccounts {
+
+        @Test
+        @DisplayName("should return paginated results for given filters")
+        void shouldReturnPagedResults() {
+            PageRequest pageable = PageRequest.of(0, 20);
+            given(accountRepository.searchAccounts(isNull(), eq(AccountStatus.ACTIVE), isNull(), isNull(), eq(pageable)))
+                    .willReturn(new PageImpl<>(List.of(sampleAccount)));
+            given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
+
+            PagedResponse<AccountResponse> result = accountService.searchAccounts(
+                    null, AccountStatus.ACTIVE, null, null, pageable);
+
+            assertThat(result.getContent()).hasSize(1);
+            assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("getBalanceSummary")
+    class GetBalanceSummary {
+
+        @Test
+        @DisplayName("should return summary with mapped values from projection")
+        void shouldReturnBalanceSummary() {
+            UUID customerId = UUID.randomUUID();
+            CustomerBalanceSummary projection = mock(CustomerBalanceSummary.class);
+            given(projection.getAccountCount()).willReturn(2L);
+            given(projection.getTotalBalance()).willReturn(BigDecimal.valueOf(5000));
+            given(projection.getHighestBalance()).willReturn(BigDecimal.valueOf(3000));
+            given(projection.getLowestBalance()).willReturn(BigDecimal.valueOf(2000));
+            given(accountRepository.getBalanceSummary(customerId)).willReturn(projection);
+
+            CustomerBalanceSummaryResponse result = accountService.getBalanceSummary(customerId);
+
+            assertThat(result.getCustomerId()).isEqualTo(customerId);
+            assertThat(result.getAccountCount()).isEqualTo(2L);
+            assertThat(result.getTotalBalance()).isEqualByComparingTo(BigDecimal.valueOf(5000));
+        }
+
+        @Test
+        @DisplayName("should return zero values when customer has no active accounts")
+        void shouldHandleCustomerWithNoAccounts() {
+            UUID customerId = UUID.randomUUID();
+            CustomerBalanceSummary projection = mock(CustomerBalanceSummary.class);
+            given(projection.getAccountCount()).willReturn(0L);
+            given(projection.getTotalBalance()).willReturn(null);
+            given(projection.getHighestBalance()).willReturn(null);
+            given(projection.getLowestBalance()).willReturn(null);
+            given(accountRepository.getBalanceSummary(customerId)).willReturn(projection);
+
+            CustomerBalanceSummaryResponse result = accountService.getBalanceSummary(customerId);
+
+            assertThat(result.getAccountCount()).isZero();
+            assertThat(result.getTotalBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+            assertThat(result.getHighestBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+            assertThat(result.getLowestBalance()).isEqualByComparingTo(BigDecimal.ZERO);
         }
     }
 

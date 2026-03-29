@@ -2,7 +2,10 @@ package com.securebank.account.controller;
 
 import com.securebank.account.dto.AccountResponse;
 import com.securebank.account.dto.CreateAccountRequest;
+import com.securebank.account.dto.CustomerBalanceSummaryResponse;
 import com.securebank.account.dto.UpdateAccountRequest;
+import com.securebank.account.entity.AccountStatus;
+import com.securebank.account.entity.AccountType;
 import com.securebank.account.service.AccountService;
 import com.securebank.common.dto.ApiResponse;
 import com.securebank.common.dto.PagedResponse;
@@ -66,6 +69,28 @@ public class AccountController {
             @Parameter(hidden = true) @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
         PagedResponse<AccountResponse> accounts = accountService.getAllAccounts(pageable);
         return ResponseEntity.ok(ApiResponse.ok(accounts));
+    }
+
+    @GetMapping("/search")
+    @Operation(summary = "Search accounts with optional filters",
+               description = "All parameters are optional — omit any to skip that filter")
+    public ResponseEntity<ApiResponse<PagedResponse<AccountResponse>>> searchAccounts(
+            @Parameter(description = "Filter by customer ID")       @RequestParam(required = false) UUID customerId,
+            @Parameter(description = "Filter by account status")    @RequestParam(required = false) AccountStatus status,
+            @Parameter(description = "Filter by account type")      @RequestParam(required = false) AccountType accountType,
+            @Parameter(description = "Minimum balance (inclusive)") @RequestParam(required = false) java.math.BigDecimal minBalance,
+            @Parameter(hidden = true) @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
+        PagedResponse<AccountResponse> accounts = accountService.searchAccounts(customerId, status, accountType, minBalance, pageable);
+        return ResponseEntity.ok(ApiResponse.ok(accounts));
+    }
+
+    @GetMapping("/customer/{customerId}/summary")
+    @Operation(summary = "Get balance summary for a customer",
+               description = "Returns total, highest and lowest balance across all non-closed accounts")
+    public ResponseEntity<ApiResponse<CustomerBalanceSummaryResponse>> getBalanceSummary(
+            @PathVariable UUID customerId) {
+        CustomerBalanceSummaryResponse summary = accountService.getBalanceSummary(customerId);
+        return ResponseEntity.ok(ApiResponse.ok(summary));
     }
 
     @PutMapping("/{id}")

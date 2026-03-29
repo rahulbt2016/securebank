@@ -2,11 +2,14 @@ package com.securebank.account.service;
 
 import com.securebank.account.dto.AccountResponse;
 import com.securebank.account.dto.CreateAccountRequest;
+import com.securebank.account.dto.CustomerBalanceSummaryResponse;
 import com.securebank.account.dto.UpdateAccountRequest;
 import com.securebank.account.entity.Account;
 import com.securebank.account.entity.AccountStatus;
+import com.securebank.account.entity.AccountType;
 import com.securebank.account.mapper.AccountMapper;
 import com.securebank.account.repository.AccountRepository;
+import com.securebank.account.repository.projection.CustomerBalanceSummary;
 import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.exception.BusinessRuleException;
 import com.securebank.common.exception.ResourceNotFoundException;
@@ -63,6 +66,24 @@ public class AccountService {
     public PagedResponse<AccountResponse> getAllAccounts(Pageable pageable) {
         Page<Account> page = accountRepository.findAll(pageable);
         return toPagedResponse(page);
+    }
+
+    public PagedResponse<AccountResponse> searchAccounts(
+            UUID customerId, AccountStatus status, AccountType accountType,
+            BigDecimal minBalance, Pageable pageable) {
+        Page<Account> page = accountRepository.searchAccounts(customerId, status, accountType, minBalance, pageable);
+        return toPagedResponse(page);
+    }
+
+    public CustomerBalanceSummaryResponse getBalanceSummary(UUID customerId) {
+        CustomerBalanceSummary summary = accountRepository.getBalanceSummary(customerId);
+        return CustomerBalanceSummaryResponse.builder()
+                .customerId(customerId)
+                .accountCount(summary.getAccountCount() != null ? summary.getAccountCount() : 0)
+                .totalBalance(summary.getTotalBalance() != null ? summary.getTotalBalance() : BigDecimal.ZERO)
+                .highestBalance(summary.getHighestBalance() != null ? summary.getHighestBalance() : BigDecimal.ZERO)
+                .lowestBalance(summary.getLowestBalance() != null ? summary.getLowestBalance() : BigDecimal.ZERO)
+                .build();
     }
 
     @Transactional

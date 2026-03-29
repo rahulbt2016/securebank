@@ -3,9 +3,11 @@ package com.securebank.account.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.securebank.account.dto.AccountResponse;
 import com.securebank.account.dto.CreateAccountRequest;
+import com.securebank.account.dto.CustomerBalanceSummaryResponse;
 import com.securebank.account.entity.AccountStatus;
 import com.securebank.account.entity.AccountType;
 import com.securebank.account.service.AccountService;
+import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.exception.GlobalExceptionHandler;
 import com.securebank.common.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.DisplayName;
@@ -19,6 +21,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.util.UUID;
+
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
@@ -106,6 +110,58 @@ class AccountControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/accounts/search - should return paginated results")
+    void shouldSearchAccounts() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        AccountResponse response = AccountResponse.builder()
+                .id(accountId)
+                .accountNumber("1234567890123")
+                .accountHolderName("Jane Doe")
+                .accountType(AccountType.CHEQUING)
+                .status(AccountStatus.ACTIVE)
+                .balance(BigDecimal.valueOf(1500.00))
+                .currency("CAD")
+                .build();
+
+        PagedResponse<AccountResponse> pagedResponse = PagedResponse.<AccountResponse>builder()
+                .content(List.of(response))
+                .page(0).size(20).totalElements(1).totalPages(1).last(true)
+                .build();
+
+        given(accountService.searchAccounts(any(), any(), any(), any(), any())).willReturn(pagedResponse);
+
+        mockMvc.perform(get("/api/v1/accounts/search")
+                        .param("status", "ACTIVE")
+                        .param("accountType", "CHEQUING"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.content[0].status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/accounts/customer/{customerId}/summary - should return balance summary")
+    void shouldReturnBalanceSummary() throws Exception {
+        UUID customerId = UUID.randomUUID();
+
+        CustomerBalanceSummaryResponse summary = CustomerBalanceSummaryResponse.builder()
+                .customerId(customerId)
+                .accountCount(2)
+                .totalBalance(BigDecimal.valueOf(5000))
+                .highestBalance(BigDecimal.valueOf(3000))
+                .lowestBalance(BigDecimal.valueOf(2000))
+                .build();
+
+        given(accountService.getBalanceSummary(customerId)).willReturn(summary);
+
+        mockMvc.perform(get("/api/v1/accounts/customer/{customerId}/summary", customerId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.accountCount").value(2))
+                .andExpect(jsonPath("$.data.totalBalance").value(5000));
     }
 
     @Test

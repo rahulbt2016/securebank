@@ -517,6 +517,52 @@ GET /api/v1/accounts?page=0&size=20&sort=createdAt,desc
 
 ---
 
+#### Search Accounts
+```
+GET /api/v1/accounts/search
+```
+
+Flexible search with optional filters. All parameters are optional — omit any to skip that filter.
+
+**Query Parameters:**
+
+| Parameter     | Type          | Required | Description                              |
+|---------------|---------------|----------|------------------------------------------|
+| `customerId`  | UUID          | No       | Filter by customer                       |
+| `status`      | AccountStatus | No       | Filter by status (ACTIVE, FROZEN, etc.)  |
+| `accountType` | AccountType   | No       | Filter by type (CHEQUING, SAVINGS, etc.) |
+| `minBalance`  | BigDecimal    | No       | Minimum balance (inclusive)              |
+| `page`        | int           | No       | Page number, default 0                   |
+| `size`        | int           | No       | Page size, default 20                    |
+| `sort`        | String        | No       | Sort field and direction                 |
+
+**Response:** `200 OK` with `PagedResponse<AccountResponse>`
+
+---
+
+#### Get Customer Balance Summary
+```
+GET /api/v1/accounts/customer/{customerId}/summary
+```
+
+Returns balance statistics across all non-closed accounts for a customer.
+
+**Response:** `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "customerId": "a0000000-0000-0000-0000-000000000001",
+    "accountCount": 3,
+    "totalBalance": 15000.00,
+    "highestBalance": 10000.00,
+    "lowestBalance": 500.00
+  }
+}
+```
+
+---
+
 #### Update Account
 ```
 PUT /api/v1/accounts/{id}
@@ -712,6 +758,17 @@ CREATE TABLE accounts (
 - `created_at` and `updated_at` are managed by JPA Auditing (`@CreatedDate`, `@LastModifiedDate`).
 - Enums (`account_type`, `status`) are stored as strings for readability.
 - `balance` uses `DECIMAL(19,2)` for financial precision -- never use `float` or `double` for money.
+- Schema is managed by **Flyway** (`V1__create_accounts_table.sql`). Hibernate is set to `ddl-auto: validate` — it only verifies, never modifies.
+
+**Indexes (created by Flyway migration):**
+
+| Index name                    | Column(s)      | Type   | Purpose                            |
+|-------------------------------|----------------|--------|------------------------------------|
+| `pk_accounts`                 | `id`           | PK     | Primary key lookup                 |
+| `uq_accounts_account_number`  | `account_number` | UNIQUE | Uniqueness enforcement           |
+| `idx_accounts_customer_id`    | `customer_id`  | BTREE  | All accounts for a customer        |
+| `idx_accounts_status`         | `status`       | BTREE  | Filter by account status           |
+| `idx_accounts_account_type`   | `account_type` | BTREE  | Filter by account type             |
 
 ---
 
@@ -724,7 +781,7 @@ CREATE TABLE accounts (
 | `AccountServiceTest`    | Unit       | 7     | JUnit 5 + Mockito  | Tests business logic with mocked dependencies  |
 | `AccountControllerTest` | Integration| 4     | MockMvc + Spring   | Tests HTTP layer, validation, error handling   |
 
-Total: **11 tests, all passing.**
+Total: **16 tests, all passing.**
 
 ### Running Tests
 
@@ -881,12 +938,12 @@ The Open Session in View anti-pattern keeps the Hibernate session open during HT
 - Docker Compose (PostgreSQL + Redis)
 - 11 passing tests (unit + integration)
 
-### Phase 2: Database & Persistence (Upcoming)
-- Flyway database migrations
-- Custom JPQL and native queries
-- Pagination and sorting
-- Optimistic locking testing
-- Database indexing and query performance
+### Phase 2: Database & Persistence (In Progress)
+- ✅ Flyway database migrations (V1 — accounts table + indexes)
+- ✅ Custom JPQL search query with optional filters
+- ✅ Native SQL balance summary query with projection interface
+- ⬜ Optimistic locking testing
+- ⬜ Query performance analysis
 
 ### Phase 3: Security
 - auth-service with JWT authentication

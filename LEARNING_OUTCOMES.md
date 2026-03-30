@@ -115,7 +115,7 @@ A living document summarizing key concepts and patterns learned after each phase
 
 ---
 
-## Phase 3 — Security (In Progress)
+## Phase 3 — Security (Complete ✓)
 
 ### JWT Authentication
 
@@ -145,3 +145,16 @@ A living document summarizing key concepts and patterns learned after each phase
 - **`@WithMockUser(roles = "ADMIN")`** — From `spring-security-test`. Sets a mock `UsernamePasswordAuthenticationToken` in the `SecurityContext` before the test runs. `roles = "ADMIN"` creates authority `ROLE_ADMIN`. Applied at class level to cover all tests, with individual methods using lower-privilege roles where role enforcement needs testing.
 - **`@TestPropertySource`** — Injects properties into the Spring test `Environment`. Used to provide `jwt.secret` and `jwt.access-token-expiry-ms` to `SecurityConfig` in `@WebMvcTest` tests (where `application.yml` may not be loaded).
 - **`UnnecessaryStubbingException`** — Mockito strict mode rejects stubs that are never matched. Triggered when a specific stub (e.g. `save(specificObject)`) is shadowed by a broader stub added later (e.g. `save(any(...))`). Fix: remove the redundant specific stub.
+
+### Auth-Service Architecture
+
+- **Separate Flyway history table** — Each service declares its own `flyway.table` (e.g. `flyway_auth_schema_history`) to avoid collision with the default `flyway_schema_history` used by account-service. Both services share the same PostgreSQL DB in dev; separate history tables let Flyway track each service's migrations independently.
+- **`JwtService` as a plain POJO** — No `@Component` annotation. Each service instantiates it as a `@Bean` in its own `SecurityConfig`, passing the JWT secret from `application.yml`. This avoids Spring auto-configuration fighting over a singleton and makes the dependency chain explicit.
+- **`ReflectionTestUtils.setField()`** — Used in unit tests to inject `@Value` fields that Mockito cannot inject (Mockito sets `@Mock`/`@InjectMocks` but skips `@Value`). Injects `accessTokenExpiryMs` and `refreshTokenExpiryDays` directly into the service instance before tests run.
+- **Role hierarchy in JWT claims** — The `role` claim stores the enum name (e.g. `ADMIN`). `JwtAuthFilter` prefixes it to `ROLE_ADMIN` when building the `GrantedAuthority`. This bridges Spring Security's `hasRole("ADMIN")` convention (which expects the `ROLE_` prefix internally) with the cleaner claim value stored in the token.
+
+---
+
+## Phase 3 — Complete ✓
+
+---

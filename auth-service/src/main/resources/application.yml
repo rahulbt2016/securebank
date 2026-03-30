@@ -22,6 +22,11 @@ spring:
     # Each service owns its own schema history table so migrations don't collide
     # in the shared securebank database.
     table: flyway_auth_schema_history
+    # The public schema already has tables from account-service. baseline-on-migrate
+    # tells Flyway: "treat everything before V1 as already done" so it doesn't refuse
+    # to run on a non-empty schema that has no auth history table yet.
+    baseline-on-migrate: true
+    baseline-version: 0
 
 server:
   port: 8082

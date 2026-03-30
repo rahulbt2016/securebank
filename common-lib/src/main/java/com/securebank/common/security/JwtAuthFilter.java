@@ -62,13 +62,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (jwtService.isTokenValid(token) &&
                 SecurityContextHolder.getContext().getAuthentication() == null) {
 
-            UUID userId = jwtService.extractUserId(token);
-            String role  = jwtService.extractRole(token);
+            UUID userId   = jwtService.extractUserId(token);
+            String email  = jwtService.extractEmail(token);
+            String role   = jwtService.extractRole(token);
+
+            // AuthenticatedUser is the principal — controllers and services read it
+            // via @AuthenticationPrincipal AuthenticatedUser caller
+            AuthenticatedUser principal = new AuthenticatedUser(userId, email, role);
 
             // Spring Security's hasRole("TELLER") checks for authority "ROLE_TELLER"
             UsernamePasswordAuthenticationToken authToken =
                     new UsernamePasswordAuthenticationToken(
-                            userId,
+                            principal,
                             null,
                             List.of(new SimpleGrantedAuthority("ROLE_" + role)));
 

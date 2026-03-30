@@ -12,7 +12,9 @@ import com.securebank.account.repository.AccountRepository;
 import com.securebank.account.repository.projection.CustomerBalanceSummary;
 import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.exception.BusinessRuleException;
+import com.securebank.common.exception.ForbiddenException;
 import com.securebank.common.exception.ResourceNotFoundException;
+import com.securebank.common.security.AuthenticatedUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -54,15 +56,20 @@ class AccountServiceTest {
     private Account sampleAccount;
     private AccountResponse sampleResponse;
     private UUID accountId;
+    private UUID ownerId;
+    private AuthenticatedUser staffCaller;
+    private AuthenticatedUser ownerCaller;
+    private AuthenticatedUser otherCustomerCaller;
 
     @BeforeEach
     void setUp() {
         accountId = UUID.randomUUID();
+        ownerId = UUID.randomUUID();
 
         sampleAccount = new Account();
         sampleAccount.setId(accountId);
         sampleAccount.setAccountNumber("1234567890123");
-        sampleAccount.setCustomerId(UUID.randomUUID());
+        sampleAccount.setCustomerId(ownerId);
         sampleAccount.setAccountHolderName("Jane Doe");
         sampleAccount.setAccountType(AccountType.CHEQUING);
         sampleAccount.setStatus(AccountStatus.ACTIVE);
@@ -78,6 +85,10 @@ class AccountServiceTest {
                 .balance(BigDecimal.valueOf(1000.00))
                 .currency("CAD")
                 .build();
+
+        staffCaller         = new AuthenticatedUser(UUID.randomUUID(), "admin@securebank.ca", "ADMIN");
+        ownerCaller         = new AuthenticatedUser(ownerId, "jane@example.com", "CUSTOMER");
+        otherCustomerCaller = new AuthenticatedUser(UUID.randomUUID(), "other@example.com", "CUSTOMER");
     }
 
     @Nested
@@ -113,14 +124,34 @@ class AccountServiceTest {
     class GetAccountById {
 
         @Test
-        @DisplayName("should return account when found")
-        void shouldReturnAccountWhenFound() {
+        @DisplayName("should return account when staff calls")
+        void shouldReturnAccountForStaff() {
             given(accountRepository.findById(accountId)).willReturn(Optional.of(sampleAccount));
             given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
 
-            AccountResponse result = accountService.getAccountById(accountId);
+            AccountResponse result = accountService.getAccountById(accountId, staffCaller);
 
             assertThat(result.getId()).isEqualTo(accountId);
+        }
+
+        @Test
+        @DisplayName("should return account when owner calls")
+        void shouldReturnAccountForOwner() {
+            given(accountRepository.findById(accountId)).willReturn(Optional.of(sampleAccount));
+            given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
+
+            AccountResponse result = accountService.getAccountById(accountId, ownerCaller);
+
+            assertThat(result.getId()).isEqualTo(accountId);
+        }
+
+        @Test
+        @DisplayName("should throw ForbiddenException when customer accesses another's account")
+        void shouldThrowForbiddenForNonOwner() {
+            given(accountRepository.findById(accountId)).willReturn(Optional.of(sampleAccount));
+
+            assertThatThrownBy(() -> accountService.getAccountById(accountId, otherCustomerCaller))
+                    .isInstanceOf(ForbiddenException.class);
         }
 
         @Test
@@ -128,7 +159,7 @@ class AccountServiceTest {
         void shouldThrowWhenNotFound() {
             given(accountRepository.findById(accountId)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> accountService.getAccountById(accountId))
+            assertThatThrownBy(() -> accountService.getAccountById(accountId, staffCaller))
                     .isInstanceOf(ResourceNotFoundException.class)
                     .hasMessageContaining("Account not found");
         }
@@ -176,18 +207,44 @@ class AccountServiceTest {
     class SearchAccounts {
 
         @Test
-        @DisplayName("should return paginated results for given filters")
-        void shouldReturnPagedResults() {
+        @DisplayName("should return paginated results for staff with given filters")
+        void shouldReturnPagedResultsForStaff() {
             PageRequest pageable = PageRequest.of(0, 20);
             given(accountRepository.searchAccounts(isNull(), eq(AccountStatus.ACTIVE), isNull(), isNull(), eq(pageable)))
                     .willReturn(new PageImpl<>(List.of(sampleAccount)));
             given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
 
             PagedResponse<AccountResponse> result = accountService.searchAccounts(
-                    null, AccountStatus.ACTIVE, null, null, pageable);
+                    null, AccountStatus.ACTIVE, null, null, pageable, staffCaller);
 
             assertThat(result.getContent()).hasSize(1);
             assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("should force customerId to caller's own ID when customer searches")
+        void shouldForceCustomerIdForCustomerCaller() {
+            PageRequest pageable = PageRequest.of(0, 20);
+            given(accountRepository.searchAccounts(eq(ownerId), isNull(), isNull(), isNull(), eq(pageable)))
+                    .willReturn(new PageImpl<>(List.of(sampleAccount)));
+            given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
+
+            // Customer passes null — service must fill in their own ID
+            PagedResponse<AccountResponse> result = accountService.searchAccounts(
+                    null, null, null, null, pageable, ownerCaller);
+
+            assertThat(result.getContent()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("should throw ForbiddenException when customer tries to search another's accounts")
+        void shouldThrowWhenCustomerSearchesOthersAccounts() {
+            PageRequest pageable = PageRequest.of(0, 20);
+            UUID someOtherCustomer = UUID.randomUUID();
+
+            assertThatThrownBy(() -> accountService.searchAccounts(
+                    someOtherCustomer, null, null, null, pageable, otherCustomerCaller))
+                    .isInstanceOf(ForbiddenException.class);
         }
     }
 
@@ -198,17 +255,16 @@ class AccountServiceTest {
         @Test
         @DisplayName("should return summary with mapped values from projection")
         void shouldReturnBalanceSummary() {
-            UUID customerId = UUID.randomUUID();
             CustomerBalanceSummary projection = mock(CustomerBalanceSummary.class);
             given(projection.getAccountCount()).willReturn(2L);
             given(projection.getTotalBalance()).willReturn(BigDecimal.valueOf(5000));
             given(projection.getHighestBalance()).willReturn(BigDecimal.valueOf(3000));
             given(projection.getLowestBalance()).willReturn(BigDecimal.valueOf(2000));
-            given(accountRepository.getBalanceSummary(customerId)).willReturn(projection);
+            given(accountRepository.getBalanceSummary(ownerId)).willReturn(projection);
 
-            CustomerBalanceSummaryResponse result = accountService.getBalanceSummary(customerId);
+            CustomerBalanceSummaryResponse result = accountService.getBalanceSummary(ownerId, staffCaller);
 
-            assertThat(result.getCustomerId()).isEqualTo(customerId);
+            assertThat(result.getCustomerId()).isEqualTo(ownerId);
             assertThat(result.getAccountCount()).isEqualTo(2L);
             assertThat(result.getTotalBalance()).isEqualByComparingTo(BigDecimal.valueOf(5000));
         }
@@ -216,20 +272,26 @@ class AccountServiceTest {
         @Test
         @DisplayName("should return zero values when customer has no active accounts")
         void shouldHandleCustomerWithNoAccounts() {
-            UUID customerId = UUID.randomUUID();
             CustomerBalanceSummary projection = mock(CustomerBalanceSummary.class);
             given(projection.getAccountCount()).willReturn(0L);
             given(projection.getTotalBalance()).willReturn(null);
             given(projection.getHighestBalance()).willReturn(null);
             given(projection.getLowestBalance()).willReturn(null);
-            given(accountRepository.getBalanceSummary(customerId)).willReturn(projection);
+            given(accountRepository.getBalanceSummary(ownerId)).willReturn(projection);
 
-            CustomerBalanceSummaryResponse result = accountService.getBalanceSummary(customerId);
+            CustomerBalanceSummaryResponse result = accountService.getBalanceSummary(ownerId, ownerCaller);
 
             assertThat(result.getAccountCount()).isZero();
             assertThat(result.getTotalBalance()).isEqualByComparingTo(BigDecimal.ZERO);
             assertThat(result.getHighestBalance()).isEqualByComparingTo(BigDecimal.ZERO);
             assertThat(result.getLowestBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+        }
+
+        @Test
+        @DisplayName("should throw ForbiddenException when customer requests another's summary")
+        void shouldThrowForbiddenForNonOwner() {
+            assertThatThrownBy(() -> accountService.getBalanceSummary(ownerId, otherCustomerCaller))
+                    .isInstanceOf(ForbiddenException.class);
         }
     }
 

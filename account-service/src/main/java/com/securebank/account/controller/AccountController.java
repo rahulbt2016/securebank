@@ -9,6 +9,7 @@ import com.securebank.account.entity.AccountType;
 import com.securebank.account.service.AccountService;
 import com.securebank.common.dto.ApiResponse;
 import com.securebank.common.dto.PagedResponse;
+import com.securebank.common.security.AuthenticatedUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -18,6 +19,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -43,45 +45,52 @@ public class AccountController {
 
     @GetMapping("/{id}")
     @Operation(summary = "Get account by ID")
-    public ResponseEntity<ApiResponse<AccountResponse>> getAccountById(@PathVariable UUID id) {
-        AccountResponse account = accountService.getAccountById(id);
+    public ResponseEntity<ApiResponse<AccountResponse>> getAccountById(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        AccountResponse account = accountService.getAccountById(id, caller);
         return ResponseEntity.ok(ApiResponse.ok(account));
     }
 
     @GetMapping("/number/{accountNumber}")
     @Operation(summary = "Get account by account number")
     public ResponseEntity<ApiResponse<AccountResponse>> getAccountByNumber(
-            @PathVariable String accountNumber) {
-        AccountResponse account = accountService.getAccountByNumber(accountNumber);
+            @PathVariable String accountNumber,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        AccountResponse account = accountService.getAccountByNumber(accountNumber, caller);
         return ResponseEntity.ok(ApiResponse.ok(account));
     }
 
     @GetMapping("/customer/{customerId}")
     @Operation(summary = "Get all accounts for a customer")
     public ResponseEntity<ApiResponse<List<AccountResponse>>> getAccountsByCustomer(
-            @PathVariable UUID customerId) {
-        List<AccountResponse> accounts = accountService.getAccountsByCustomerId(customerId);
+            @PathVariable UUID customerId,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        List<AccountResponse> accounts = accountService.getAccountsByCustomerId(customerId, caller);
         return ResponseEntity.ok(ApiResponse.ok(accounts));
     }
 
     @GetMapping
-    @Operation(summary = "Get all accounts (paginated)")
+    @Operation(summary = "Get all accounts (paginated) — staff only")
     public ResponseEntity<ApiResponse<PagedResponse<AccountResponse>>> getAllAccounts(
-            @Parameter(hidden = true) @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
-        PagedResponse<AccountResponse> accounts = accountService.getAllAccounts(pageable);
+            @Parameter(hidden = true) @PageableDefault(size = 20, sort = "createdAt") Pageable pageable,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        PagedResponse<AccountResponse> accounts = accountService.getAllAccounts(pageable, caller);
         return ResponseEntity.ok(ApiResponse.ok(accounts));
     }
 
     @GetMapping("/search")
     @Operation(summary = "Search accounts with optional filters",
-               description = "All parameters are optional — omit any to skip that filter")
+               description = "Customers are restricted to their own accounts. Staff can search all.")
     public ResponseEntity<ApiResponse<PagedResponse<AccountResponse>>> searchAccounts(
             @Parameter(description = "Filter by customer ID")       @RequestParam(required = false) UUID customerId,
             @Parameter(description = "Filter by account status")    @RequestParam(required = false) AccountStatus status,
             @Parameter(description = "Filter by account type")      @RequestParam(required = false) AccountType accountType,
             @Parameter(description = "Minimum balance (inclusive)") @RequestParam(required = false) BigDecimal minBalance,
-            @Parameter(hidden = true) @PageableDefault(size = 20, sort = "createdAt") Pageable pageable) {
-        PagedResponse<AccountResponse> accounts = accountService.searchAccounts(customerId, status, accountType, minBalance, pageable);
+            @Parameter(hidden = true) @PageableDefault(size = 20, sort = "createdAt") Pageable pageable,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        PagedResponse<AccountResponse> accounts = accountService.searchAccounts(
+                customerId, status, accountType, minBalance, pageable, caller);
         return ResponseEntity.ok(ApiResponse.ok(accounts));
     }
 
@@ -89,8 +98,9 @@ public class AccountController {
     @Operation(summary = "Get balance summary for a customer",
                description = "Returns total, highest and lowest balance across all non-closed accounts")
     public ResponseEntity<ApiResponse<CustomerBalanceSummaryResponse>> getBalanceSummary(
-            @PathVariable UUID customerId) {
-        CustomerBalanceSummaryResponse summary = accountService.getBalanceSummary(customerId);
+            @PathVariable UUID customerId,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        CustomerBalanceSummaryResponse summary = accountService.getBalanceSummary(customerId, caller);
         return ResponseEntity.ok(ApiResponse.ok(summary));
     }
 

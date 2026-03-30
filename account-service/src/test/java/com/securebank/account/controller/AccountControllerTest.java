@@ -8,8 +8,10 @@ import com.securebank.account.entity.AccountStatus;
 import com.securebank.account.entity.AccountType;
 import com.securebank.account.service.AccountService;
 import com.securebank.common.dto.PagedResponse;
+import com.securebank.common.exception.ForbiddenException;
 import com.securebank.common.exception.GlobalExceptionHandler;
 import com.securebank.common.exception.ResourceNotFoundException;
+import com.securebank.common.security.AuthenticatedUser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,7 +19,8 @@ import com.securebank.account.config.SecurityConfig;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -27,7 +30,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -35,7 +41,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(AccountController.class)
 @Import({GlobalExceptionHandler.class, SecurityConfig.class})
-@WithMockUser(roles = "ADMIN")   // default role for all tests — individual tests override where needed
 @TestPropertySource(properties = {
         "jwt.secret=test-secret-key-long-enough-for-hs256-algorithm-at-least-32-chars!!",
         "jwt.access-token-expiry-ms=900000"
@@ -50,6 +55,22 @@ class AccountControllerTest {
 
     @MockitoBean
     private AccountService accountService;
+
+    // ── Auth helpers ─────────────────────────────────────────────────────────
+
+    private static UsernamePasswordAuthenticationToken adminAuth() {
+        AuthenticatedUser user = new AuthenticatedUser(UUID.randomUUID(), "admin@securebank.ca", "ADMIN");
+        return new UsernamePasswordAuthenticationToken(user, null,
+                List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+    }
+
+    private static UsernamePasswordAuthenticationToken customerAuth(UUID customerId) {
+        AuthenticatedUser user = new AuthenticatedUser(customerId, "customer@example.com", "CUSTOMER");
+        return new UsernamePasswordAuthenticationToken(user, null,
+                List.of(new SimpleGrantedAuthority("ROLE_CUSTOMER")));
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
 
     @Test
     @DisplayName("POST /api/v1/accounts - should create account and return 201")
@@ -78,6 +99,7 @@ class AccountControllerTest {
         given(accountService.createAccount(any(CreateAccountRequest.class))).willReturn(response);
 
         mockMvc.perform(post("/api/v1/accounts")
+                        .with(authentication(adminAuth()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -98,6 +120,7 @@ class AccountControllerTest {
                 .build();
 
         mockMvc.perform(post("/api/v1/accounts")
+                        .with(authentication(adminAuth()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
@@ -107,16 +130,58 @@ class AccountControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/v1/accounts/{id} - should return account")
+    void shouldReturnAccount() throws Exception {
+        UUID accountId = UUID.randomUUID();
+
+        AccountResponse response = AccountResponse.builder()
+                .id(accountId)
+                .accountNumber("1234567890123")
+                .accountHolderName("Jane Doe")
+                .accountType(AccountType.SAVINGS)
+                .status(AccountStatus.ACTIVE)
+                .balance(BigDecimal.valueOf(5000.00))
+                .currency("CAD")
+                .build();
+
+        given(accountService.getAccountById(eq(accountId), any(AuthenticatedUser.class))).willReturn(response);
+
+        mockMvc.perform(get("/api/v1/accounts/{id}", accountId)
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.id").value(accountId.toString()))
+                .andExpect(jsonPath("$.data.accountType").value("SAVINGS"));
+    }
+
+    @Test
     @DisplayName("GET /api/v1/accounts/{id} - should return 404 for non-existent account")
     void shouldReturn404ForNonExistentAccount() throws Exception {
         UUID id = UUID.randomUUID();
-        given(accountService.getAccountById(id))
+        given(accountService.getAccountById(eq(id), any(AuthenticatedUser.class)))
                 .willThrow(new ResourceNotFoundException("Account", "id", id));
 
-        mockMvc.perform(get("/api/v1/accounts/{id}", id))
+        mockMvc.perform(get("/api/v1/accounts/{id}", id)
+                        .with(authentication(adminAuth())))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/accounts/{id} - customer gets 403 accessing another customer's account")
+    void shouldReturn403WhenCustomerAccessesOthersAccount() throws Exception {
+        UUID accountId = UUID.randomUUID();
+        UUID attackerId = UUID.randomUUID(); // different from the account's owner
+
+        given(accountService.getAccountById(eq(accountId), any(AuthenticatedUser.class)))
+                .willThrow(new ForbiddenException("You do not have access to this account"));
+
+        mockMvc.perform(get("/api/v1/accounts/{id}", accountId)
+                        .with(authentication(customerAuth(attackerId))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
 
     @Test
@@ -138,9 +203,11 @@ class AccountControllerTest {
                 .page(0).size(20).totalElements(1).totalPages(1).last(true)
                 .build();
 
-        given(accountService.searchAccounts(any(), any(), any(), any(), any())).willReturn(pagedResponse);
+        given(accountService.searchAccounts(any(), any(), any(), any(), any(), any(AuthenticatedUser.class)))
+                .willReturn(pagedResponse);
 
         mockMvc.perform(get("/api/v1/accounts/search")
+                        .with(authentication(adminAuth()))
                         .param("status", "ACTIVE")
                         .param("accountType", "CHEQUING"))
                 .andExpect(status().isOk())
@@ -161,36 +228,13 @@ class AccountControllerTest {
                 .lowestBalance(BigDecimal.valueOf(2000))
                 .build();
 
-        given(accountService.getBalanceSummary(customerId)).willReturn(summary);
+        given(accountService.getBalanceSummary(eq(customerId), any(AuthenticatedUser.class))).willReturn(summary);
 
-        mockMvc.perform(get("/api/v1/accounts/customer/{customerId}/summary", customerId))
+        mockMvc.perform(get("/api/v1/accounts/customer/{customerId}/summary", customerId)
+                        .with(authentication(adminAuth())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.accountCount").value(2))
                 .andExpect(jsonPath("$.data.totalBalance").value(5000));
-    }
-
-    @Test
-    @DisplayName("GET /api/v1/accounts/{id} - should return account")
-    void shouldReturnAccount() throws Exception {
-        UUID accountId = UUID.randomUUID();
-
-        AccountResponse response = AccountResponse.builder()
-                .id(accountId)
-                .accountNumber("1234567890123")
-                .accountHolderName("Jane Doe")
-                .accountType(AccountType.SAVINGS)
-                .status(AccountStatus.ACTIVE)
-                .balance(BigDecimal.valueOf(5000.00))
-                .currency("CAD")
-                .build();
-
-        given(accountService.getAccountById(accountId)).willReturn(response);
-
-        mockMvc.perform(get("/api/v1/accounts/{id}", accountId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.id").value(accountId.toString()))
-                .andExpect(jsonPath("$.data.accountType").value("SAVINGS"));
     }
 }

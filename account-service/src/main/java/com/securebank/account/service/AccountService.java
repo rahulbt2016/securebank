@@ -12,7 +12,9 @@ import com.securebank.account.repository.AccountRepository;
 import com.securebank.account.repository.projection.CustomerBalanceSummary;
 import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.exception.BusinessRuleException;
+import com.securebank.common.exception.ForbiddenException;
 import com.securebank.common.exception.ResourceNotFoundException;
+import com.securebank.common.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -46,36 +48,52 @@ public class AccountService {
         return accountMapper.toResponse(saved);
     }
 
-    public AccountResponse getAccountById(UUID id) {
+    public AccountResponse getAccountById(UUID id, AuthenticatedUser caller) {
         Account account = findAccountOrThrow(id);
+        requireOwnershipOrStaff(account.getCustomerId(), caller);
         return accountMapper.toResponse(account);
     }
 
-    public AccountResponse getAccountByNumber(String accountNumber) {
+    public AccountResponse getAccountByNumber(String accountNumber, AuthenticatedUser caller) {
         Account account = accountRepository.findByAccountNumber(accountNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", "accountNumber", accountNumber));
+        requireOwnershipOrStaff(account.getCustomerId(), caller);
         return accountMapper.toResponse(account);
     }
 
-    public List<AccountResponse> getAccountsByCustomerId(UUID customerId) {
+    public List<AccountResponse> getAccountsByCustomerId(UUID customerId, AuthenticatedUser caller) {
+        requireOwnershipOrStaff(customerId, caller);
         return accountRepository.findByCustomerId(customerId).stream()
                 .map(accountMapper::toResponse)
                 .toList();
     }
 
-    public PagedResponse<AccountResponse> getAllAccounts(Pageable pageable) {
+    public PagedResponse<AccountResponse> getAllAccounts(Pageable pageable, AuthenticatedUser caller) {
+        if (!caller.isStaff()) {
+            throw new ForbiddenException("Access to all accounts requires staff privileges");
+        }
         Page<Account> page = accountRepository.findAll(pageable);
         return toPagedResponse(page);
     }
 
     public PagedResponse<AccountResponse> searchAccounts(
             UUID customerId, AccountStatus status, AccountType accountType,
-            BigDecimal minBalance, Pageable pageable) {
+            BigDecimal minBalance, Pageable pageable, AuthenticatedUser caller) {
+
+        // Customers can only search within their own accounts
+        if (!caller.isStaff()) {
+            if (customerId != null && !customerId.equals(caller.userId())) {
+                throw new ForbiddenException("You can only search your own accounts");
+            }
+            customerId = caller.userId(); // force filter to their own accounts
+        }
+
         Page<Account> page = accountRepository.searchAccounts(customerId, status, accountType, minBalance, pageable);
         return toPagedResponse(page);
     }
 
-    public CustomerBalanceSummaryResponse getBalanceSummary(UUID customerId) {
+    public CustomerBalanceSummaryResponse getBalanceSummary(UUID customerId, AuthenticatedUser caller) {
+        requireOwnershipOrStaff(customerId, caller);
         CustomerBalanceSummary summary = accountRepository.getBalanceSummary(customerId);
         return CustomerBalanceSummaryResponse.builder()
                 .customerId(customerId)
@@ -123,6 +141,18 @@ public class AccountService {
         log.info("Account closed: {}", account.getAccountNumber());
     }
 
+    // ── Internal ──────────────────────────────────────────────────────────────
+
+    /**
+     * Throws ForbiddenException if the caller is a CUSTOMER and the resource
+     * does not belong to them. Staff (TELLER, MANAGER, ADMIN) pass through.
+     */
+    private void requireOwnershipOrStaff(UUID resourceCustomerId, AuthenticatedUser caller) {
+        if (!caller.isStaff() && !resourceCustomerId.equals(caller.userId())) {
+            throw new ForbiddenException("You do not have access to this account");
+        }
+    }
+
     private Account findAccountOrThrow(UUID id) {
         return accountRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", "id", id));
@@ -137,7 +167,6 @@ public class AccountService {
         long number = ThreadLocalRandom.current().nextLong(1_000_000_000_000L, 9_999_999_999_999L);
         String accountNumber = String.valueOf(number);
 
-        // Ensure uniqueness (very unlikely collision, but safety first)
         while (accountRepository.existsByAccountNumber(accountNumber)) {
             number = ThreadLocalRandom.current().nextLong(1_000_000_000_000L, 9_999_999_999_999L);
             accountNumber = String.valueOf(number);

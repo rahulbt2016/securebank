@@ -54,6 +54,16 @@ public class GlobalExceptionHandler {
                         ex.getMessage()));
     }
 
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ApiResponse<Void>> handleForbidden(ForbiddenException ex) {
+        log.warn("Forbidden: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(
+                        HttpStatus.FORBIDDEN.value(),
+                        "FORBIDDEN",
+                        ex.getMessage()));
+    }
+
     @ExceptionHandler(BusinessRuleException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessRule(BusinessRuleException ex) {
         log.warn("Business rule violation: {} - {}", ex.getCode(), ex.getMessage());

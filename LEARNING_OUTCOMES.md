@@ -89,6 +89,26 @@ A living document summarizing key concepts and patterns learned after each phase
 - **JPQL vs Native SQL** — Use JPQL for most queries (portable, object-oriented). Use native SQL for aggregates, window functions, or when you need DB-specific features. Native queries require projection interfaces or `Object[]` for custom result mapping.
 - **Null safety in projections** — `SUM`, `MAX`, `MIN` return `NULL` from SQL when there are no rows (e.g. customer with no accounts). Always null-check projection values in the service layer and provide sensible defaults (`BigDecimal.ZERO`). `COUNT(*)` always returns a number, never NULL.
 
-### What's Still Remaining in Phase 2
-- Optimistic locking testing — write tests that prove `@Version` prevents concurrent lost updates
-- Query performance — `EXPLAIN ANALYZE` on key queries, additional indexing if needed
+### Optimistic Locking — Integration Testing
+
+- **Why unit tests cannot prove optimistic locking** — `@Version` is enforced by JPA/Hibernate at flush time. A Mockito unit test that mocks the repository never touches Hibernate, so it can't prove the locking actually works. You need a real persistence context against a real (or in-memory) DB.
+- **`@DataJpaTest`** — loads only the JPA slice (entities, repositories, `EntityManager`). No web layer, no service beans. Uses an H2 in-memory database automatically. Much faster than `@SpringBootTest`.
+- **`Propagation.NOT_SUPPORTED` on the test method** — overrides `@DataJpaTest`'s default "wrap every test in a rolled-back transaction". With `NOT_SUPPORTED`, no transaction wraps the test body, so each `TransactionTemplate.execute()` block runs in its own committed transaction — exactly simulating two separate database sessions.
+- **`TransactionTemplate`** — programmatic way to run a lambda in a transaction. Injected via `PlatformTransactionManager`. Use `execute()` when you need a return value, `executeWithoutResult()` when you don't.
+- **The lost-update proof** — the test loads the same entity twice (each in its own committed transaction), producing two detached copies both at `version=0`. Session 1 saves (`UPDATE WHERE version=0` → succeeds, version becomes 1). Session 2 tries to save its stale copy (`UPDATE WHERE version=0` → 0 rows affected → Hibernate throws `StaleObjectStateException` → Spring wraps it as `ObjectOptimisticLockingFailureException`).
+- **Manual `@AfterEach` cleanup** — because `NOT_SUPPORTED` disables the automatic rollback, inserted rows persist after the test. An `@AfterEach` method using `TransactionTemplate` explicitly deletes the test data so subsequent test runs start clean.
+
+### Query Performance — Composite Indexes
+
+- **How PostgreSQL uses single-column indexes for multi-filter queries** — if `searchAccounts` filtered on `customer_id` AND `status`, PostgreSQL would need to either pick one index and re-check the other condition in memory, or do a costly bitmap-AND of two index scans. A composite index eliminates this.
+- **Composite index prefix rule** — PostgreSQL can use any *left-prefix* of a composite index. An index on `(customer_id, status, account_type)` covers:
+  - `WHERE customer_id = ?` (prefix of 1)
+  - `WHERE customer_id = ? AND status = ?` (prefix of 2)
+  - `WHERE customer_id = ? AND status = ? AND account_type = ?` (full key)
+  It cannot be used for `WHERE status = ?` alone (no left prefix) — the existing `idx_accounts_status` still serves that case.
+- **`EXPLAIN ANALYZE`** — PostgreSQL command that shows the query plan *and* runs the query to report actual row counts and timing. Key things to read: `Seq Scan` (full table scan, usually bad at scale) vs `Index Scan` / `Index Only Scan` (good). `rows=` estimates vs actual tell you if table statistics are stale.
+- **V2 migration** — added `idx_accounts_customer_status_type ON accounts (customer_id, status, account_type)`. This replaces what would otherwise be three separate lookups for the most common search pattern (a customer's active accounts of a given type).
+
+---
+
+## Phase 2 — Complete ✓

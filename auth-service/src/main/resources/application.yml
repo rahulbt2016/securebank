@@ -1,6 +1,6 @@
 spring:
   application:
-    name: account-service
+    name: auth-service
 
   datasource:
     url: jdbc:postgresql://localhost:5432/securebank
@@ -18,13 +18,18 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
 
-jwt:
-  # Must match the secret used by auth-service — in production, load from a secrets manager
-  secret: securebank-jwt-secret-key-for-development-use-only-change-in-production!
-  access-token-expiry-ms: 900000
+  flyway:
+    # Each service owns its own schema history table so migrations don't collide
+    # in the shared securebank database.
+    table: flyway_auth_schema_history
 
 server:
-  port: 8081
+  port: 8082
+
+jwt:
+  secret: securebank-jwt-secret-key-for-development-use-only-change-in-production!
+  access-token-expiry-ms: 900000      # 15 minutes
+  refresh-token-expiry-days: 7
 
 springdoc:
   api-docs:

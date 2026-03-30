@@ -938,16 +938,21 @@ The Open Session in View anti-pattern keeps the Hibernate session open during HT
 - Docker Compose (PostgreSQL + Redis)
 - 11 passing tests (unit + integration)
 
-### Phase 2: Database & Persistence (In Progress)
-- ✅ Flyway database migrations (V1 — accounts table + indexes)
+### Phase 2: Database & Persistence -- COMPLETE
+- ✅ Flyway database migrations (V1 — accounts table + indexes, V2 — composite search index)
 - ✅ Custom JPQL search query with optional filters
 - ✅ Native SQL balance summary query with projection interface
-- ⬜ Optimistic locking testing
-- ⬜ Query performance analysis
+- ✅ Optimistic locking integration test (TransactionTemplate, NOT_SUPPORTED)
+- ✅ Query performance analysis + composite index (customer_id, status, account_type)
 
-### Phase 3: Security
-- auth-service with JWT authentication
-- Role-based access control (CUSTOMER, TELLER, MANAGER, ADMIN)
+### Phase 3: Security (In Progress)
+- ✅ auth-service with JWT authentication (register, login, refresh, logout)
+- ✅ Role-based access control (CUSTOMER, TELLER, MANAGER, ADMIN)
+- ✅ Refresh token rotation (persisted in DB, revocable)
+- ✅ account-service secured with JWT filter + role-based endpoint rules
+- ⬜ Rate limiting with Redis
+- ⬜ Audit logging
+- ⬜ PII encryption
 - Refresh token rotation
 - Rate limiting with Redis
 - Audit logging, PII encryption

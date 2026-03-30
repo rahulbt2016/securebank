@@ -112,3 +112,36 @@ A living document summarizing key concepts and patterns learned after each phase
 ---
 
 ## Phase 2 — Complete ✓
+
+---
+
+## Phase 3 — Security (In Progress)
+
+### JWT Authentication
+
+- **Why JWTs for microservices** — Traditional server-side sessions require every service to query a shared session store on every request. JWTs are self-contained: the token carries the user's identity and role, signed by a secret key. Each service verifies the signature locally — no cross-service calls needed.
+- **HS256 (HMAC-SHA256)** — The token is signed with a shared secret key. Both auth-service (signing) and account-service (verifying) must use the same key. In production this secret would come from a secrets manager (AWS Secrets Manager, HashiCorp Vault), never hardcoded.
+- **Token structure** — Header (algorithm) + Payload (claims: `sub`=userId, `email`, `role`, `iat`, `exp`) + Signature. The payload is Base64-encoded, not encrypted — never put sensitive data in a JWT claim.
+- **Access token lifetime** — Short (15 min). If stolen, it expires quickly. The client uses the refresh token to get a new access token without re-entering credentials.
+- **`JwtService` in common-lib** — Marked as optional dependencies so JWT/Security classes don't bleed into services that don't need them. Services that use it re-declare the deps explicitly in their own `pom.xml`.
+
+### Refresh Token Rotation
+
+- **Why persist refresh tokens** — Access tokens are stateless (verified by signature alone, cannot be revoked mid-flight). Refresh tokens need to be revocable. By storing them in DB we can mark one revoked on logout, and detect token reuse (a revoked token being replayed signals a theft).
+- **Rotation** — On each `/auth/refresh` call: the old refresh token is revoked and a brand new one is issued. If an attacker steals a refresh token and uses it, the legitimate user's next refresh will fail (their token was already rotated away), giving a clear signal of compromise.
+- **`revokeAllByUserId` JPQL** — Bulk-revoke all active tokens for a user (e.g. on password change). Uses `@Modifying` which tells Spring Data the query mutates data, required for `UPDATE`/`DELETE` JPQL.
+
+### Spring Security 6 Configuration
+
+- **`SecurityFilterChain` bean** — Replaces the deprecated `WebSecurityConfigurerAdapter`. Lambda-style DSL: `http.authorizeHttpRequests(auth -> auth.requestMatchers(...).hasRole(...))`. Reads left-to-right: first matching rule wins.
+- **`SessionCreationPolicy.STATELESS`** — Tells Spring Security not to create or use HTTP sessions. Every request must carry a JWT. Essential for stateless REST APIs.
+- **`csrf(AbstractHttpConfigurer::disable)`** — CSRF attacks exploit browser cookie-based auth. Since we use `Authorization: Bearer` headers (not cookies), CSRF doesn't apply. Disabling it is correct and required for REST APIs.
+- **`hasRole` vs `hasAuthority`** — `hasRole("ADMIN")` checks for granted authority `ROLE_ADMIN` (auto-prefixed). `hasAuthority("ROLE_ADMIN")` checks for the exact string. They're equivalent when authority is stored with the `ROLE_` prefix. We store `ROLE_` + roleName in `JwtAuthFilter`.
+- **`JwtAuthFilter` — NOT a `@Component`** — If registered as `@Component`, Spring Boot auto-registers it as a raw servlet filter AND adds it to the security chain — double execution. Instead, it's a plain class instantiated explicitly via `@Bean` in `SecurityConfig` and added with `http.addFilterBefore()`.
+
+### Testing with Spring Security
+
+- **`@WebMvcTest` doesn't auto-discover `SecurityConfig`** — `@WebMvcTest` loads a web-slice context. Custom `@Configuration @EnableWebSecurity` classes are not always auto-detected. Without it, Spring Boot's default security (CSRF enabled) takes over — POST requests without a CSRF token return 403. Fix: `@Import(SecurityConfig.class)` in controller tests.
+- **`@WithMockUser(roles = "ADMIN")`** — From `spring-security-test`. Sets a mock `UsernamePasswordAuthenticationToken` in the `SecurityContext` before the test runs. `roles = "ADMIN"` creates authority `ROLE_ADMIN`. Applied at class level to cover all tests, with individual methods using lower-privilege roles where role enforcement needs testing.
+- **`@TestPropertySource`** — Injects properties into the Spring test `Environment`. Used to provide `jwt.secret` and `jwt.access-token-expiry-ms` to `SecurityConfig` in `@WebMvcTest` tests (where `application.yml` may not be loaded).
+- **`UnnecessaryStubbingException`** — Mockito strict mode rejects stubs that are never matched. Triggered when a specific stub (e.g. `save(specificObject)`) is shadowed by a broader stub added later (e.g. `save(any(...))`). Fix: remove the redundant specific stub.

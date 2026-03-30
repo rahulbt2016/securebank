@@ -1,6 +1,7 @@
 package com.securebank.auth.service;
 
 import com.securebank.auth.dto.AuthResponse;
+import com.securebank.auth.dto.CreateUserRequest;
 import com.securebank.auth.dto.LoginRequest;
 import com.securebank.auth.dto.RefreshTokenRequest;
 import com.securebank.auth.dto.RegisterRequest;
@@ -68,12 +69,11 @@ class AuthServiceTest {
     class Register {
 
         @Test
-        @DisplayName("should register new user and return tokens")
+        @DisplayName("should register new user as CUSTOMER regardless of any role input")
         void shouldRegisterNewUser() {
             RegisterRequest request = RegisterRequest.builder()
                     .email("jane@example.com")
                     .password("password123")
-                    .role(Role.CUSTOMER)
                     .build();
 
             given(userRepository.existsByEmail(request.getEmail())).willReturn(false);
@@ -97,12 +97,59 @@ class AuthServiceTest {
             RegisterRequest request = RegisterRequest.builder()
                     .email("jane@example.com")
                     .password("password123")
-                    .role(Role.CUSTOMER)
                     .build();
 
             given(userRepository.existsByEmail(request.getEmail())).willReturn(true);
 
             assertThatThrownBy(() -> authService.register(request))
+                    .isInstanceOf(DuplicateResourceException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("createUser")
+    class CreateUser {
+
+        @Test
+        @DisplayName("should create user with the specified role")
+        void shouldCreateUserWithRole() {
+            CreateUserRequest request = CreateUserRequest.builder()
+                    .email("teller@securebank.ca")
+                    .password("password123")
+                    .role(Role.TELLER)
+                    .build();
+
+            User tellerUser = new User();
+            tellerUser.setId(UUID.randomUUID());
+            tellerUser.setEmail("teller@securebank.ca");
+            tellerUser.setPasswordHash("$2a$10$hashed");
+            tellerUser.setRole(Role.TELLER);
+            tellerUser.setActive(true);
+
+            given(userRepository.existsByEmail(request.getEmail())).willReturn(false);
+            given(passwordEncoder.encode(request.getPassword())).willReturn("$2a$10$hashed");
+            given(userRepository.save(any(User.class))).willReturn(tellerUser);
+            given(jwtService.generateAccessToken(any(), anyString(), anyString())).willReturn("access-token");
+            given(refreshTokenRepository.save(any(RefreshToken.class))).willAnswer(inv -> inv.getArgument(0));
+
+            AuthResponse result = authService.createUser(request);
+
+            assertThat(result.getRole()).isEqualTo("TELLER");
+            assertThat(result.getEmail()).isEqualTo("teller@securebank.ca");
+        }
+
+        @Test
+        @DisplayName("should throw DuplicateResourceException when email already exists")
+        void shouldThrowOnDuplicateEmail() {
+            CreateUserRequest request = CreateUserRequest.builder()
+                    .email("jane@example.com")
+                    .password("password123")
+                    .role(Role.ADMIN)
+                    .build();
+
+            given(userRepository.existsByEmail(request.getEmail())).willReturn(true);
+
+            assertThatThrownBy(() -> authService.createUser(request))
                     .isInstanceOf(DuplicateResourceException.class);
         }
     }

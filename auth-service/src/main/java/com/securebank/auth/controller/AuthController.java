@@ -1,6 +1,7 @@
 package com.securebank.auth.controller;
 
 import com.securebank.auth.dto.AuthResponse;
+import com.securebank.auth.dto.CreateUserRequest;
 import com.securebank.auth.dto.LoginRequest;
 import com.securebank.auth.dto.RefreshTokenRequest;
 import com.securebank.auth.dto.RegisterRequest;
@@ -54,5 +55,13 @@ public class AuthController {
     public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
         authService.logout(request);
         return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/admin/create-user")
+    @Operation(summary = "Admin only: create a user account with any role")
+    public ResponseEntity<ApiResponse<AuthResponse>> createUser(
+            @Valid @RequestBody CreateUserRequest request) {
+        AuthResponse response = authService.createUser(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
     }
 }

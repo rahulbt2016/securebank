@@ -2,6 +2,7 @@ package com.securebank.auth.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.securebank.auth.dto.AuthResponse;
+import com.securebank.auth.dto.CreateUserRequest;
 import com.securebank.auth.dto.LoginRequest;
 import com.securebank.auth.dto.RefreshTokenRequest;
 import com.securebank.auth.dto.RegisterRequest;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -55,12 +57,11 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/v1/auth/register - should return 201 with tokens")
+    @DisplayName("POST /api/v1/auth/register - should return 201 with tokens as CUSTOMER")
     void shouldRegisterUser() throws Exception {
         RegisterRequest request = RegisterRequest.builder()
                 .email("jane@example.com")
                 .password("password123")
-                .role(Role.CUSTOMER)
                 .build();
 
         given(authService.register(any(RegisterRequest.class))).willReturn(sampleAuthResponse());
@@ -81,7 +82,6 @@ class AuthControllerTest {
         RegisterRequest request = RegisterRequest.builder()
                 .email("not-an-email")
                 .password("short")
-                .role(null)
                 .build();
 
         mockMvc.perform(post("/api/v1/auth/register")
@@ -159,5 +159,66 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    @DisplayName("POST /api/v1/auth/admin/create-user - ADMIN should return 201")
+    void shouldCreateUserAsAdmin() throws Exception {
+        CreateUserRequest request = CreateUserRequest.builder()
+                .email("teller@securebank.ca")
+                .password("password123")
+                .role(Role.TELLER)
+                .build();
+
+        AuthResponse tellerResponse = AuthResponse.builder()
+                .accessToken("eyJhbGciOiJIUzI1NiJ9.sample.token")
+                .refreshToken(UUID.randomUUID().toString())
+                .tokenType("Bearer")
+                .expiresIn(900)
+                .userId(UUID.randomUUID())
+                .email("teller@securebank.ca")
+                .role("TELLER")
+                .build();
+
+        given(authService.createUser(any(CreateUserRequest.class))).willReturn(tellerResponse);
+
+        mockMvc.perform(post("/api/v1/auth/admin/create-user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.role").value("TELLER"))
+                .andExpect(jsonPath("$.data.email").value("teller@securebank.ca"));
+    }
+
+    @Test
+    @WithMockUser(roles = "CUSTOMER")
+    @DisplayName("POST /api/v1/auth/admin/create-user - non-ADMIN should return 403")
+    void shouldReturn403ForNonAdmin() throws Exception {
+        CreateUserRequest request = CreateUserRequest.builder()
+                .email("teller@securebank.ca")
+                .password("password123")
+                .role(Role.TELLER)
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/admin/create-user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/auth/admin/create-user - unauthenticated should return 401")
+    void shouldReturn401ForUnauthenticated() throws Exception {
+        CreateUserRequest request = CreateUserRequest.builder()
+                .email("teller@securebank.ca")
+                .password("password123")
+                .role(Role.TELLER)
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/admin/create-user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isUnauthorized());
     }
 }

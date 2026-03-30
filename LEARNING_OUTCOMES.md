@@ -153,6 +153,15 @@ A living document summarizing key concepts and patterns learned after each phase
 - **`ReflectionTestUtils.setField()`** — Used in unit tests to inject `@Value` fields that Mockito cannot inject (Mockito sets `@Mock`/`@InjectMocks` but skips `@Value`). Injects `accessTokenExpiryMs` and `refreshTokenExpiryDays` directly into the service instance before tests run.
 - **Role hierarchy in JWT claims** — The `role` claim stores the enum name (e.g. `ADMIN`). `JwtAuthFilter` prefixes it to `ROLE_ADMIN` when building the `GrantedAuthority`. This bridges Spring Security's `hasRole("ADMIN")` convention (which expects the `ROLE_` prefix internally) with the cleaner claim value stored in the token.
 
+### Securing the Registration Endpoint
+
+- **Open registration is a vulnerability** — Allowing any client to pass a `role` field (e.g. `ADMIN`) in the register request body means an attacker can self-elevate to any role. The client should never be trusted to choose their own role.
+- **Public registration hardcodes `CUSTOMER`** — The `RegisterRequest` DTO has no `role` field. The service layer calls `user.setRole(Role.CUSTOMER)` unconditionally — the client cannot influence it regardless of what they send.
+- **Separate admin endpoint for staff provisioning** — `POST /api/v1/auth/admin/create-user` accepts a `role` field but is locked behind `hasRole("ADMIN")` in `SecurityConfig`. Only an authenticated ADMIN can create TELLER/MANAGER/ADMIN accounts. This mirrors how real banks provision staff — IT/HR systems create staff accounts, customers self-register.
+- **Rule ordering in `SecurityFilterChain`** — The admin rule (`.requestMatchers("/api/v1/auth/admin/**").hasRole("ADMIN")`) must be declared **before** the public permit rule. Spring Security evaluates rules top-to-bottom; first match wins. If the broad `permitAll` rule came first, the admin rule would never be reached.
+- **401 vs 403 for unauthenticated requests** — Spring Security's default `AuthenticationEntryPoint` for stateless APIs is `Http403ForbiddenEntryPoint`, which returns 403 even for completely unauthenticated requests. This is semantically wrong — 401 means "authenticate first", 403 means "you're authenticated but not allowed". Fix: configure `.exceptionHandling(ex -> ex.authenticationEntryPoint(...))` to return 401.
+- **Anonymous users and `AccessDeniedException`** — Spring's `AnonymousAuthenticationFilter` sets an `AnonymousAuthenticationToken` on every request with no credentials. When this anonymous user hits a protected endpoint, Spring throws `AccessDeniedException` (not `AuthenticationException`), which is why the default behaviour is 403. The custom `AuthenticationEntryPoint` intercepts this and returns 401 instead.
+
 ---
 
 ## Phase 3 — Complete ✓

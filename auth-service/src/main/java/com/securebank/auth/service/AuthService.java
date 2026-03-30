@@ -1,10 +1,12 @@
 package com.securebank.auth.service;
 
 import com.securebank.auth.dto.AuthResponse;
+import com.securebank.auth.dto.CreateUserRequest;
 import com.securebank.auth.dto.LoginRequest;
 import com.securebank.auth.dto.RefreshTokenRequest;
 import com.securebank.auth.dto.RegisterRequest;
 import com.securebank.auth.entity.RefreshToken;
+import com.securebank.auth.entity.Role;
 import com.securebank.auth.entity.User;
 import com.securebank.auth.repository.RefreshTokenRepository;
 import com.securebank.auth.repository.UserRepository;
@@ -49,10 +51,29 @@ public class AuthService {
         User user = new User();
         user.setEmail(request.getEmail());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
-        user.setRole(request.getRole());
+        user.setRole(Role.CUSTOMER); // public registration always creates a CUSTOMER
 
         User saved = userRepository.save(user);
         log.info("User registered: {} with role {}", saved.getEmail(), saved.getRole());
+
+        return buildAuthResponse(saved);
+    }
+
+    // ── Admin: Create User ────────────────────────────────────────────────────
+
+    @Transactional
+    public AuthResponse createUser(CreateUserRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new DuplicateResourceException("User", "email", request.getEmail());
+        }
+
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setRole(request.getRole());
+
+        User saved = userRepository.save(user);
+        log.info("User created by admin: {} with role {}", saved.getEmail(), saved.getRole());
 
         return buildAuthResponse(saved);
     }

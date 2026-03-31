@@ -8,6 +8,7 @@ import com.securebank.auth.dto.RegisterRequest;
 import com.securebank.auth.service.AuthService;
 import com.securebank.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +59,7 @@ public class AuthController {
     }
 
     @PostMapping("/admin/create-user")
+    @SecurityRequirement(name = "bearerAuth")
     @Operation(summary = "Admin only: create a user account with any role")
     public ResponseEntity<ApiResponse<AuthResponse>> createUser(
             @Valid @RequestBody CreateUserRequest request) {

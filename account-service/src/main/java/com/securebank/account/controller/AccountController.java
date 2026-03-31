@@ -12,6 +12,7 @@ import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.security.AuthenticatedUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/accounts")
 @RequiredArgsConstructor
 @Tag(name = "Account Management", description = "CRUD operations for bank accounts")
+@SecurityRequirement(name = "bearerAuth")
 public class AccountController {
 
     private final AccountService accountService;

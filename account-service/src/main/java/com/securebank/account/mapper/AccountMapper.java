@@ -10,6 +10,7 @@ import org.mapstruct.Mapping;
 public interface AccountMapper {
 
     @Mapping(target = "id", ignore = true)
+    @Mapping(target = "customerId", ignore = true)
     @Mapping(target = "accountNumber", ignore = true)
     @Mapping(target = "balance", ignore = true)
     @Mapping(target = "status", ignore = true)

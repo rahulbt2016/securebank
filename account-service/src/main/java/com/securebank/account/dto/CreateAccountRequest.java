@@ -17,7 +17,8 @@ import java.util.UUID;
 @AllArgsConstructor
 public class CreateAccountRequest {
 
-    @NotNull(message = "Customer ID is required")
+    // Optional for CUSTOMER callers — service sets it from the JWT.
+    // Required for STAFF callers — they specify which customer they are acting for.
     private UUID customerId;
 
     @NotBlank(message = "Account holder name is required")

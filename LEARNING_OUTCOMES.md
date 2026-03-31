@@ -201,3 +201,25 @@ A living document summarizing key concepts and patterns learned after each phase
 ## Phase 3 — Complete ✓
 
 ---
+
+## Phase 4 — Observability & Data Protection (In Progress)
+
+### Audit Logging
+
+- **Why audit logging is mandatory in banking** — Regulations like SOX, PCI-DSS, GDPR, and OSFI require financial institutions to maintain tamper-evident records of all data mutations. Audit logs answer "who changed what, to which resource, and when" — enabling fraud detection, compliance audits, incident response, and legal non-repudiation.
+- **Write-once entity design** — `AuditLog` does not extend `BaseEntity`. `BaseEntity` includes `@Version` (optimistic locking) and `updatedAt` — neither makes sense for an immutable record. Audit entries are never updated; adding those fields would be misleading and wasteful.
+- **`@PrePersist` for immutable timestamp** — `occurredAt` is set in a `@PrePersist` method (not via JPA Auditing) and marked `updatable = false`. This guarantees the timestamp is set exactly once at insert time and can never be overwritten by an accidental `save()` later.
+- **`Propagation.REQUIRES_NEW`** — The audit `log()` method runs in its own independent transaction. If the outer transaction (e.g. `createAccount`) rolls back due to an error after the account is saved, the audit entry still commits. In production you always want a record that the operation was attempted — even if it ultimately failed.
+- **Caller identity from JWT, never from the request** — `AuthenticatedUser caller` flows from the JWT (verified by `JwtAuthFilter`) through `@AuthenticationPrincipal` in the controller to the service. The audit record contains a cryptographically verified `userId` and `email` — the client cannot forge it.
+- **`updatedFields` tracking on UPDATE** — Rather than recording just "an update happened", the service builds a list of which fields actually changed (`accountHolderName`, `status`, `branchCode`). This granularity is required for meaningful compliance reports.
+- **Indexes for audit queries** — Three indexes cover the three access patterns: by entity (all events on account X), by performer (all actions by user Y), and by time descending (most recent events first). Audit tables grow fast; indexes are non-negotiable.
+- **`performed_by` is nullable** — System-triggered operations (scheduled jobs, migrations, future event consumers) have no human caller. The column is nullable by design so the schema does not force a fake userId for automated processes.
+
+### Account Ownership on Creation
+
+- **Never trust the client for identity** — Just as we hardcode `CUSTOMER` role on registration (the client cannot self-elevate), we never let the client decide who owns an account. `customerId` must come from a verified source, not a free-form request field.
+- **Role-based `customerId` resolution** — For CUSTOMER callers, `customerId` is always forced to `caller.userId()` from the JWT — the client cannot provide it. For STAFF callers, `customerId` is required in the request body (they are opening an account on behalf of a specific customer). This is enforced in the service layer, not the controller.
+- **`@Mapping(target = "customerId", ignore = true)` in MapStruct** — The mapper no longer copies `customerId` from the request DTO to the entity. Ownership is set explicitly in the service after the mapper runs. This keeps the mapping layer free from business logic.
+- **Why not validate `customerId` against `auth-service`?** — Account-service has no direct DB access to the `users` table (separate service, separate schema). Cross-service validation via HTTP would introduce coupling and a failure point. For now, staff-provided `customerId` is trusted (they are authenticated + authorized). Full validation via event-driven customer sync is deferred to Phase 6 (Kafka).
+
+---

@@ -96,7 +96,7 @@ class AccountControllerTest {
                 .currency("CAD")
                 .build();
 
-        given(accountService.createAccount(any(CreateAccountRequest.class))).willReturn(response);
+        given(accountService.createAccount(any(CreateAccountRequest.class), any(AuthenticatedUser.class))).willReturn(response);
 
         mockMvc.perform(post("/api/v1/accounts")
                         .with(authentication(adminAuth()))
@@ -113,7 +113,6 @@ class AccountControllerTest {
     @DisplayName("POST /api/v1/accounts - should return 400 for invalid request")
     void shouldReturn400ForInvalidRequest() throws Exception {
         CreateAccountRequest request = CreateAccountRequest.builder()
-                .customerId(null)          // required
                 .accountHolderName("")     // required, min 2 chars
                 .accountType(null)         // required
                 .currency(null)            // required

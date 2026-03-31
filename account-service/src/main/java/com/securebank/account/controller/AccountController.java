@@ -39,8 +39,9 @@ public class AccountController {
     @PostMapping
     @Operation(summary = "Create a new bank account")
     public ResponseEntity<ApiResponse<AccountResponse>> createAccount(
-            @Valid @RequestBody CreateAccountRequest request) {
-        AccountResponse account = accountService.createAccount(request);
+            @Valid @RequestBody CreateAccountRequest request,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        AccountResponse account = accountService.createAccount(request, caller);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.created(account));
     }
@@ -110,15 +111,18 @@ public class AccountController {
     @Operation(summary = "Update an account")
     public ResponseEntity<ApiResponse<AccountResponse>> updateAccount(
             @PathVariable UUID id,
-            @Valid @RequestBody UpdateAccountRequest request) {
-        AccountResponse account = accountService.updateAccount(id, request);
+            @Valid @RequestBody UpdateAccountRequest request,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        AccountResponse account = accountService.updateAccount(id, request, caller);
         return ResponseEntity.ok(ApiResponse.ok(account));
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Close an account (balance must be zero)")
-    public ResponseEntity<ApiResponse<Void>> closeAccount(@PathVariable UUID id) {
-        accountService.closeAccount(id);
+    public ResponseEntity<ApiResponse<Void>> closeAccount(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal AuthenticatedUser caller) {
+        accountService.closeAccount(id, caller);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 }

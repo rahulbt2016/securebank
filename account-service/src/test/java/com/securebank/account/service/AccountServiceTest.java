@@ -10,6 +10,7 @@ import com.securebank.account.entity.AccountType;
 import com.securebank.account.mapper.AccountMapper;
 import com.securebank.account.repository.AccountRepository;
 import com.securebank.account.repository.projection.CustomerBalanceSummary;
+import com.securebank.account.service.AuditService;
 import com.securebank.common.dto.PagedResponse;
 import com.securebank.common.exception.BusinessRuleException;
 import com.securebank.common.exception.ForbiddenException;
@@ -49,6 +50,9 @@ class AccountServiceTest {
 
     @Mock
     private AccountMapper accountMapper;
+
+    @Mock
+    private AuditService auditService;
 
     @InjectMocks
     private AccountService accountService;
@@ -96,10 +100,31 @@ class AccountServiceTest {
     class CreateAccount {
 
         @Test
-        @DisplayName("should create account with ACTIVE status and zero balance")
-        void shouldCreateAccount() {
+        @DisplayName("should use caller's userId as customerId when caller is a customer")
+        void shouldUseCallerIdForCustomer() {
             CreateAccountRequest request = CreateAccountRequest.builder()
-                    .customerId(UUID.randomUUID())
+                    .accountHolderName("Jane Doe")
+                    .accountType(AccountType.CHEQUING)
+                    .currency("CAD")
+                    .build(); // no customerId — customer doesn't provide it
+
+            Account newAccount = new Account();
+            given(accountMapper.toEntity(request)).willReturn(newAccount);
+            given(accountRepository.existsByAccountNumber(anyString())).willReturn(false);
+            given(accountRepository.save(any(Account.class))).willReturn(sampleAccount);
+            given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
+
+            accountService.createAccount(request, ownerCaller);
+
+            assertThat(newAccount.getCustomerId()).isEqualTo(ownerCaller.userId());
+        }
+
+        @Test
+        @DisplayName("should use request customerId when caller is staff")
+        void shouldUseRequestCustomerIdForStaff() {
+            UUID targetCustomerId = UUID.randomUUID();
+            CreateAccountRequest request = CreateAccountRequest.builder()
+                    .customerId(targetCustomerId)
                     .accountHolderName("Jane Doe")
                     .accountType(AccountType.CHEQUING)
                     .currency("CAD")
@@ -111,11 +136,26 @@ class AccountServiceTest {
             given(accountRepository.save(any(Account.class))).willReturn(sampleAccount);
             given(accountMapper.toResponse(sampleAccount)).willReturn(sampleResponse);
 
-            AccountResponse result = accountService.createAccount(request);
+            accountService.createAccount(request, staffCaller);
 
-            assertThat(result).isNotNull();
-            assertThat(result.getAccountHolderName()).isEqualTo("Jane Doe");
-            verify(accountRepository).save(any(Account.class));
+            assertThat(newAccount.getCustomerId()).isEqualTo(targetCustomerId);
+        }
+
+        @Test
+        @DisplayName("should throw BusinessRuleException when staff omits customerId")
+        void shouldThrowWhenStaffOmitsCustomerId() {
+            CreateAccountRequest request = CreateAccountRequest.builder()
+                    .accountHolderName("Jane Doe")
+                    .accountType(AccountType.CHEQUING)
+                    .currency("CAD")
+                    .build(); // staff forgot to provide customerId
+
+            Account newAccount = new Account();
+            given(accountMapper.toEntity(request)).willReturn(newAccount);
+
+            assertThatThrownBy(() -> accountService.createAccount(request, staffCaller))
+                    .isInstanceOf(BusinessRuleException.class)
+                    .hasMessageContaining("customerId");
         }
     }
 
@@ -180,7 +220,7 @@ class AccountServiceTest {
             given(accountRepository.save(any(Account.class))).willReturn(sampleAccount);
             given(accountMapper.toResponse(any(Account.class))).willReturn(sampleResponse);
 
-            AccountResponse result = accountService.updateAccount(accountId, request);
+            AccountResponse result = accountService.updateAccount(accountId, request, staffCaller);
 
             assertThat(result).isNotNull();
             verify(accountRepository).save(sampleAccount);
@@ -196,7 +236,7 @@ class AccountServiceTest {
                     .accountHolderName("Jane Smith")
                     .build();
 
-            assertThatThrownBy(() -> accountService.updateAccount(accountId, request))
+            assertThatThrownBy(() -> accountService.updateAccount(accountId, request, staffCaller))
                     .isInstanceOf(BusinessRuleException.class)
                     .hasMessageContaining("closed account");
         }
@@ -306,7 +346,7 @@ class AccountServiceTest {
             given(accountRepository.findById(accountId)).willReturn(Optional.of(sampleAccount));
             given(accountRepository.save(any(Account.class))).willReturn(sampleAccount);
 
-            accountService.closeAccount(accountId);
+            accountService.closeAccount(accountId, staffCaller);
 
             assertThat(sampleAccount.getStatus()).isEqualTo(AccountStatus.CLOSED);
             verify(accountRepository).save(sampleAccount);
@@ -318,7 +358,7 @@ class AccountServiceTest {
             sampleAccount.setBalance(BigDecimal.valueOf(500.00));
             given(accountRepository.findById(accountId)).willReturn(Optional.of(sampleAccount));
 
-            assertThatThrownBy(() -> accountService.closeAccount(accountId))
+            assertThatThrownBy(() -> accountService.closeAccount(accountId, staffCaller))
                     .isInstanceOf(BusinessRuleException.class)
                     .hasMessageContaining("balance must be zero");
         }

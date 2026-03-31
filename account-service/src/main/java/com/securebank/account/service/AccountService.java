@@ -7,6 +7,7 @@ import com.securebank.account.dto.UpdateAccountRequest;
 import com.securebank.account.entity.Account;
 import com.securebank.account.entity.AccountStatus;
 import com.securebank.account.entity.AccountType;
+import com.securebank.account.entity.AuditAction;
 import com.securebank.account.mapper.AccountMapper;
 import com.securebank.account.repository.AccountRepository;
 import com.securebank.account.repository.projection.CustomerBalanceSummary;
@@ -23,9 +24,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -35,16 +38,34 @@ public class AccountService {
 
     private final AccountRepository accountRepository;
     private final AccountMapper accountMapper;
+    private final AuditService auditService;
 
     @Transactional
-    public AccountResponse createAccount(CreateAccountRequest request) {
+    public AccountResponse createAccount(CreateAccountRequest request, AuthenticatedUser caller) {
         Account account = accountMapper.toEntity(request);
+
+        if (caller.isStaff()) {
+            if (request.getCustomerId() == null) {
+                throw new BusinessRuleException("CUSTOMER_ID_REQUIRED",
+                        "Staff must provide a customerId when creating an account on behalf of a customer");
+            }
+            account.setCustomerId(request.getCustomerId());
+        } else {
+            // Customers can only open accounts for themselves
+            account.setCustomerId(caller.userId());
+        }
+
         account.setAccountNumber(generateAccountNumber());
         account.setBalance(BigDecimal.ZERO);
         account.setStatus(AccountStatus.ACTIVE);
 
         Account saved = accountRepository.save(account);
         log.info("Account created: {} for customer {}", saved.getAccountNumber(), saved.getCustomerId());
+
+        String details = String.format("{\"accountNumber\":\"%s\",\"accountType\":\"%s\",\"currency\":\"%s\"}",
+                saved.getAccountNumber(), saved.getAccountType(), saved.getCurrency());
+        auditService.log("Account", saved.getId(), AuditAction.CREATE, caller, details);
+
         return accountMapper.toResponse(saved);
     }
 
@@ -105,30 +126,40 @@ public class AccountService {
     }
 
     @Transactional
-    public AccountResponse updateAccount(UUID id, UpdateAccountRequest request) {
+    public AccountResponse updateAccount(UUID id, UpdateAccountRequest request, AuthenticatedUser caller) {
         Account account = findAccountOrThrow(id);
 
         if (account.getStatus() == AccountStatus.CLOSED) {
             throw new BusinessRuleException("ACCOUNT_CLOSED", "Cannot update a closed account");
         }
 
+        List<String> changedFields = new ArrayList<>();
         if (request.getAccountHolderName() != null) {
             account.setAccountHolderName(request.getAccountHolderName());
+            changedFields.add("accountHolderName");
         }
         if (request.getStatus() != null) {
             account.setStatus(request.getStatus());
+            changedFields.add("status");
         }
         if (request.getBranchCode() != null) {
             account.setBranchCode(request.getBranchCode());
+            changedFields.add("branchCode");
         }
 
         Account updated = accountRepository.save(account);
         log.info("Account updated: {}", updated.getAccountNumber());
+
+        String fieldList = changedFields.stream().map(f -> "\"" + f + "\"").collect(Collectors.joining(","));
+        String details = String.format("{\"accountNumber\":\"%s\",\"updatedFields\":[%s]}",
+                updated.getAccountNumber(), fieldList);
+        auditService.log("Account", updated.getId(), AuditAction.UPDATE, caller, details);
+
         return accountMapper.toResponse(updated);
     }
 
     @Transactional
-    public void closeAccount(UUID id) {
+    public void closeAccount(UUID id, AuthenticatedUser caller) {
         Account account = findAccountOrThrow(id);
 
         if (account.getBalance().compareTo(BigDecimal.ZERO) != 0) {
@@ -139,6 +170,9 @@ public class AccountService {
         account.setStatus(AccountStatus.CLOSED);
         accountRepository.save(account);
         log.info("Account closed: {}", account.getAccountNumber());
+
+        String details = String.format("{\"accountNumber\":\"%s\"}", account.getAccountNumber());
+        auditService.log("Account", account.getId(), AuditAction.CLOSE, caller, details);
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────

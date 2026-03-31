@@ -2,8 +2,8 @@ package com.securebank.auth.config;
 
 import com.securebank.common.security.JwtAuthFilter;
 import com.securebank.common.security.JwtService;
-import org.springframework.beans.factory.annotation.Value;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -15,6 +15,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import java.io.IOException;
+import java.time.Instant;
 
 @Configuration
 @EnableWebSecurity
@@ -61,12 +64,22 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling(ex -> ex
-                        // Without this, Spring Security's default entry point returns 403 for
-                        // unauthenticated requests. 401 is the correct response: "you need to authenticate".
-                        .authenticationEntryPoint((request, response, e) ->
-                                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized"))
+                        .authenticationEntryPoint((req, res, e) ->
+                                writeJsonError(res, 401, "UNAUTHORIZED", "Authentication required — provide a valid Bearer token"))
+                        .accessDeniedHandler((req, res, e) ->
+                                writeJsonError(res, 403, "FORBIDDEN", "You do not have permission to perform this action"))
                 )
                 .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class)
                 .build();
+    }
+
+    private void writeJsonError(HttpServletResponse response, int status, String code, String message)
+            throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+        response.getWriter().write(String.format(
+                "{\"success\":false,\"error\":{\"status\":%d,\"code\":\"%s\",\"message\":\"%s\"},\"timestamp\":\"%s\"}",
+                status, code, message, Instant.now()));
     }
 }

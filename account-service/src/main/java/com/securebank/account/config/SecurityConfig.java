@@ -14,6 +14,9 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import java.io.IOException;
+import java.time.Instant;
+
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
@@ -26,7 +29,6 @@ public class SecurityConfig {
 
     @Bean
     public JwtService jwtService() {
-        // accessTokenExpiryMs is not used for validation-only, but JwtService requires it
         return new JwtService(jwtSecret, accessTokenExpiryMs);
     }
 
@@ -44,8 +46,10 @@ public class SecurityConfig {
                         // Infrastructure / docs — no token needed
                         .requestMatchers("/actuator/**", "/api-docs/**", "/swagger-ui/**").permitAll()
 
-                        // Create account — TELLER and above
-                        .requestMatchers(HttpMethod.POST, "/api/v1/accounts").hasAnyRole("TELLER", "MANAGER", "ADMIN")
+                        // Create account — any authenticated user
+                        // CUSTOMER: customerId forced from JWT (own accounts only)
+                        // STAFF: customerId required in request body
+                        .requestMatchers(HttpMethod.POST, "/api/v1/accounts").authenticated()
 
                         // Update account — TELLER and above
                         .requestMatchers(HttpMethod.PUT, "/api/v1/accounts/**").hasAnyRole("TELLER", "MANAGER", "ADMIN")
@@ -57,10 +61,22 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint((request, response, e) ->
-                                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized"))
+                        .authenticationEntryPoint((req, res, e) ->
+                                writeJsonError(res, 401, "UNAUTHORIZED", "Authentication required — provide a valid Bearer token"))
+                        .accessDeniedHandler((req, res, e) ->
+                                writeJsonError(res, 403, "FORBIDDEN", "You do not have permission to perform this action"))
                 )
                 .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class)
                 .build();
+    }
+
+    private void writeJsonError(HttpServletResponse response, int status, String code, String message)
+            throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+        response.getWriter().write(String.format(
+                "{\"success\":false,\"error\":{\"status\":%d,\"code\":\"%s\",\"message\":\"%s\"},\"timestamp\":\"%s\"}",
+                status, code, message, Instant.now()));
     }
 }

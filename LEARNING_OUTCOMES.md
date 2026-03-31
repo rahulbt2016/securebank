@@ -173,6 +173,29 @@ A living document summarizing key concepts and patterns learned after each phase
 - **`searchAccounts` forced filter** — Customers can't bypass the filter by passing a different `customerId` as a query param. The service overwrites it: `customerId = caller.userId()`. This means a CUSTOMER always gets back only their own accounts, regardless of what they sent.
 - **Testing with `SecurityMockMvcRequestPostProcessors.authentication()`** — `@WithMockUser` sets a `UserDetails` as principal, but our controllers inject `AuthenticatedUser`. When Spring tries to inject the wrong type, the value is null. Fix: build a real `UsernamePasswordAuthenticationToken` carrying an `AuthenticatedUser` and pass it via `.with(authentication(...))` in `mockMvc.perform(...)`. Dedicated `adminAuth()` and `customerAuth(UUID)` helper methods create the correct tokens.
 
+### Rate Limiting with Redis
+
+- **Why Redis for rate limiting** — Rate limit checks must be sub-millisecond (every login request hits them). Redis stores counters in RAM, making reads/writes microsecond-fast. It also has native TTL support — keys auto-delete after a set time with no cleanup code needed. Using PostgreSQL for this would be unnecessarily slow and add DB load.
+- **Redis data structures** — Redis is not just a key-value store. It supports Strings, Hashes, Lists, Sets, Sorted Sets, and Streams. We use **String** for counters because Redis's `INCR` command atomically increments a string value as an integer — no race conditions under concurrent traffic.
+- **Fixed-window counter pattern** — Each email gets a Redis key `auth:login:attempts:{email}` with a TTL of 15 minutes. `INCR` increments the counter on each failure. TTL is set only on the **first** increment (when `count == 1`) so the 15-minute window starts from the first failure, not from every subsequent attempt. After 5 failures, the next attempt is rejected with 429.
+- **`Retry-After` header** — The 429 response includes a `Retry-After` header containing the remaining TTL in seconds from Redis (`getExpire(key, SECONDS)`). This is a standard HTTP header — well-behaved clients read it and wait before retrying. The value also appears in the response body message for human-readable APIs.
+- **Per-email vs per-IP** — Tracking by email directly protects the account being targeted. IP-based limiting is a complementary layer better placed at the API Gateway/load balancer level (Phase 6) where `X-Forwarded-For` is reliably available. Behind a proxy, all requests appear to come from the same IP, making service-level IP limiting unreliable.
+- **Failure recording logic** — Unknown email counts as a failure (prevents cheap user enumeration). Disabled account does NOT count (admin action, not a brute-force scenario). Successful login clears the counter so a user who previously failed doesn't stay locked out.
+- **`StringRedisTemplate`** — Spring's Redis client that serializes both keys and values as plain UTF-8 strings. Auto-created by Spring Boot when `spring-boot-starter-data-redis` is on the classpath and `spring.data.redis.host/port` are configured. No `@Configuration` class needed.
+- **Disabling Redis in tests** — `@WebMvcTest` is a web-slice test and doesn't auto-configure Redis. Pure Mockito unit tests have no Spring context at all. `application-test.yml` explicitly excludes `RedisAutoConfiguration` and `RedisRepositoriesAutoConfiguration` as a safety net for any future `@SpringBootTest`.
+
+### Component Scan Pitfall — Multi-Module Spring Boot
+
+- **`@SpringBootApplication` only scans its own package tree** — `@SpringBootApplication` on `com.securebank.auth.AuthServiceApplication` scans `com.securebank.auth.*` only. `GlobalExceptionHandler` lives in `com.securebank.common.exception` — a sibling package tree, not a sub-package. It was on the classpath but Spring never registered it as a bean, so ALL custom exception handlers (401, 403, 404, 409, 429...) were silently broken in the running app. Tests worked because `@WebMvcTest` used `@Import(GlobalExceptionHandler.class)` explicitly.
+- **Fix: `scanBasePackages`** — `@SpringBootApplication(scanBasePackages = {"com.securebank.auth", "com.securebank.common"})` tells Spring to scan both package trees. Common-lib beans (`GlobalExceptionHandler`) are now discovered and registered. The same pattern was already correctly applied in `AccountServiceApplication`.
+- **How to spot this in future** — If custom exception handlers work in tests but not in the running app, check `scanBasePackages`. The test's `@Import` masks the issue.
+
+### Swagger Bearer Auth
+
+- **`@SecurityScheme`** — SpringDoc OpenAPI annotation that declares an authentication mechanism for the whole API. `type = HTTP, scheme = bearer, bearerFormat = JWT` adds the **Authorize 🔓** button to Swagger UI. Place it on a `@Configuration` class alongside `@OpenAPIDefinition`.
+- **`@SecurityRequirement(name = "bearerAuth")`** — Applies the declared scheme to specific endpoints or an entire controller. In Swagger UI, matching endpoints show a padlock icon 🔒 and automatically include the `Authorization: Bearer` header when the user has authorized. Apply at class level for controllers where all endpoints need auth; at method level for mixed controllers (e.g. `AuthController` where only the admin endpoint is secured).
+- **Workflow** — Hit `POST /auth/login` in Swagger UI → copy `accessToken` from response → click Authorize → paste token (no `Bearer ` prefix needed, Swagger adds it) → all secured endpoints in that session include the header automatically.
+
 ---
 
 ## Phase 3 — Complete ✓

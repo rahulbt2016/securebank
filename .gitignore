@@ -33,3 +33,6 @@ application-local.yml
 # Build
 build/
 out/
+
+# Claude Code
+.claude/

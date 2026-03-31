@@ -28,8 +28,18 @@ spring:
     baseline-on-migrate: true
     baseline-version: 0
 
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
 server:
   port: 8082
+
+rate-limit:
+  login:
+    max-attempts: 5
+    window-seconds: 900   # 15-minute window
 
 jwt:
   secret: securebank-jwt-secret-key-for-development-use-only-change-in-production!

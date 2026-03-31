@@ -11,6 +11,7 @@ import com.securebank.auth.entity.User;
 import com.securebank.auth.repository.RefreshTokenRepository;
 import com.securebank.auth.repository.UserRepository;
 import com.securebank.common.exception.DuplicateResourceException;
+import com.securebank.common.exception.TooManyRequestsException;
 import com.securebank.common.exception.UnauthorizedException;
 import com.securebank.common.security.JwtService;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,6 +44,7 @@ class AuthServiceTest {
     @Mock private RefreshTokenRepository refreshTokenRepository;
     @Mock private JwtService jwtService;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private LoginRateLimitService loginRateLimitService;
 
     @InjectMocks
     private AuthService authService;
@@ -222,6 +225,57 @@ class AuthServiceTest {
             assertThatThrownBy(() -> authService.login(request))
                     .isInstanceOf(UnauthorizedException.class)
                     .hasMessageContaining("disabled");
+        }
+
+        @Test
+        @DisplayName("should throw TooManyRequestsException when rate limit exceeded")
+        void shouldThrowWhenRateLimitExceeded() {
+            LoginRequest request = LoginRequest.builder()
+                    .email("jane@example.com")
+                    .password("password123")
+                    .build();
+
+            willThrow(new TooManyRequestsException(540L))
+                    .given(loginRateLimitService).checkLimit(request.getEmail());
+
+            assertThatThrownBy(() -> authService.login(request))
+                    .isInstanceOf(TooManyRequestsException.class)
+                    .hasMessageContaining("Try again in");
+        }
+
+        @Test
+        @DisplayName("should record failure on wrong password")
+        void shouldRecordFailureOnWrongPassword() {
+            LoginRequest request = LoginRequest.builder()
+                    .email("jane@example.com")
+                    .password("wrongpassword")
+                    .build();
+
+            given(userRepository.findByEmail(request.getEmail())).willReturn(Optional.of(sampleUser));
+            given(passwordEncoder.matches(request.getPassword(), sampleUser.getPasswordHash())).willReturn(false);
+
+            assertThatThrownBy(() -> authService.login(request))
+                    .isInstanceOf(UnauthorizedException.class);
+
+            verify(loginRateLimitService).recordFailure(request.getEmail());
+        }
+
+        @Test
+        @DisplayName("should clear rate limit counter on successful login")
+        void shouldClearLimitOnSuccess() {
+            LoginRequest request = LoginRequest.builder()
+                    .email("jane@example.com")
+                    .password("password123")
+                    .build();
+
+            given(userRepository.findByEmail(request.getEmail())).willReturn(Optional.of(sampleUser));
+            given(passwordEncoder.matches(request.getPassword(), sampleUser.getPasswordHash())).willReturn(true);
+            given(jwtService.generateAccessToken(any(), anyString(), anyString())).willReturn("access-token");
+            given(refreshTokenRepository.save(any(RefreshToken.class))).willAnswer(inv -> inv.getArgument(0));
+
+            authService.login(request);
+
+            verify(loginRateLimitService).clearLimit(request.getEmail());
         }
     }
 

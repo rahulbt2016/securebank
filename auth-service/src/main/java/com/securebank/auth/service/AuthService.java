@@ -33,6 +33,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
+    private final LoginRateLimitService loginRateLimitService;
 
     @Value("${jwt.access-token-expiry-ms}")
     private long accessTokenExpiryMs;
@@ -82,8 +83,13 @@ public class AuthService {
 
     @Transactional
     public AuthResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new UnauthorizedException("Invalid email or password"));
+        loginRateLimitService.checkLimit(request.getEmail());
+
+        User user = userRepository.findByEmail(request.getEmail()).orElse(null);
+        if (user == null) {
+            loginRateLimitService.recordFailure(request.getEmail());
+            throw new UnauthorizedException("Invalid email or password");
+        }
 
         if (!user.isActive()) {
             throw new UnauthorizedException("Account is disabled");
@@ -91,9 +97,11 @@ public class AuthService {
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             log.warn("Failed login attempt for email: {}", request.getEmail());
+            loginRateLimitService.recordFailure(request.getEmail());
             throw new UnauthorizedException("Invalid email or password");
         }
 
+        loginRateLimitService.clearLimit(request.getEmail());
         log.info("User logged in: {}", user.getEmail());
         return buildAuthResponse(user);
     }

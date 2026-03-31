@@ -10,6 +10,7 @@ import com.securebank.auth.entity.Role;
 import com.securebank.auth.config.SecurityConfig;
 import com.securebank.auth.service.AuthService;
 import com.securebank.common.exception.GlobalExceptionHandler;
+import com.securebank.common.exception.TooManyRequestsException;
 import com.securebank.common.exception.UnauthorizedException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -128,6 +129,25 @@ class AuthControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/auth/login - should return 429 when rate limit exceeded")
+    void shouldReturn429WhenRateLimitExceeded() throws Exception {
+        LoginRequest request = LoginRequest.builder()
+                .email("jane@example.com")
+                .password("wrongpassword")
+                .build();
+
+        given(authService.login(any(LoginRequest.class)))
+                .willThrow(new TooManyRequestsException(540L));
+
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("TOO_MANY_REQUESTS"));
     }
 
     @Test

@@ -222,4 +222,11 @@ A living document summarizing key concepts and patterns learned after each phase
 - **`@Mapping(target = "customerId", ignore = true)` in MapStruct** — The mapper no longer copies `customerId` from the request DTO to the entity. Ownership is set explicitly in the service after the mapper runs. This keeps the mapping layer free from business logic.
 - **Why not validate `customerId` against `auth-service`?** — Account-service has no direct DB access to the `users` table (separate service, separate schema). Cross-service validation via HTTP would introduce coupling and a failure point. For now, staff-provided `customerId` is trusted (they are authenticated + authorized). Full validation via event-driven customer sync is deferred to Phase 6 (Kafka).
 
+### Spring Security Error Responses
+
+- **`GlobalExceptionHandler` never sees 401/403 from Spring Security** — Spring Security's filter chain rejects unauthorized/forbidden requests before the request ever reaches a controller. `@RestControllerAdvice` only handles exceptions thrown inside controllers — it is bypassed entirely for filter-level rejections. This is why custom exception handlers alone are not enough.
+- **Two separate hooks for security errors** — Spring Security provides two distinct extension points: `authenticationEntryPoint` (fires on 401 — no token or invalid token) and `accessDeniedHandler` (fires on 403 — valid token but insufficient role). Both must be configured independently to get consistent error responses.
+- **`sendError()` vs writing the response directly** — `response.sendError(401, "message")` delegates to the servlet container's default error page, which returns HTML or a plain string with no JSON body. Writing to `response.getWriter()` directly gives full control over the content type and body — the correct approach for a REST API.
+- **`@EnableJpaAuditing` must be in every service** — `AuditingEntityListener` on `BaseEntity` is activated by `@EnableJpaAuditing`. This annotation is not inherited from common-lib — each Spring Boot application must declare it in its own `@Configuration` class. Without it, `@CreatedDate` and `@LastModifiedDate` fields silently stay null.
+
 ---
